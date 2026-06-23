@@ -17,6 +17,92 @@ const Chat = () => {
 
   const messagesEndRef = useRef(null);
 
+  const downloadReportFile = async (reportDownload) => {
+    const response = await apiClient.get(reportDownload.downloadUrl, {
+      responseType: 'blob',
+    });
+
+    const blobUrl = window.URL.createObjectURL(
+      new Blob([response.data], { type: 'application/pdf' }),
+    );
+    const link = document.createElement('a');
+    link.href = blobUrl;
+    link.setAttribute('download', reportDownload.fileName);
+    document.body.appendChild(link);
+    link.click();
+    link.remove();
+    window.URL.revokeObjectURL(blobUrl);
+  };
+
+  const handleSendReport = async (message, file) => {
+    if (!activeChatId || !file) {
+      return;
+    }
+
+    const userMsg = {
+      role: 'user',
+      content: message || `Uploaded Excel: ${file.name}`,
+    };
+    setMessages((prev) => [...prev, userMsg]);
+    setIsLoading(true);
+    setErrorMsg('');
+
+    try {
+      const formData = new FormData();
+      formData.append('file', file);
+      formData.append('message', message || 'Generate PSO report');
+
+      const response = await apiClient.post(`/chat/${activeChatId}/report`, formData, {
+        headers: { 'Content-Type': 'multipart/form-data' },
+      });
+
+      const updatedChat = response.data?.chat;
+
+      if (updatedChat?.messages) {
+        setMessages(updatedChat.messages);
+      } else {
+        const reply = response.data?.reply || 'Report generated successfully.';
+        setMessages((prev) => [...prev, { role: 'assistant', content: reply }]);
+      }
+
+      if (updatedChat) {
+        setChats((prev) => {
+          const nextChats = prev.map((chat) =>
+            chat.id === updatedChat.id
+              ? { ...chat, title: updatedChat.title, updatedAt: updatedChat.updatedAt }
+              : chat,
+          );
+
+          return nextChats.sort(
+            (a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime(),
+          );
+        });
+      }
+
+      if (response.data?.reportDownload) {
+        try {
+          await downloadReportFile(response.data.reportDownload);
+        } catch (downloadErr) {
+          console.error(downloadErr);
+          setErrorMsg('Report was generated but the PDF download failed. Please try again.');
+        }
+      }
+    } catch (err) {
+      console.error(err);
+      const errText = err.response?.data?.message || err.message || 'Failed to generate report.';
+      setErrorMsg(errText);
+      setMessages((prev) => [
+        ...prev,
+        {
+          role: 'assistant',
+          content: `⚠️ **Error:** ${errText}`,
+        },
+      ]);
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
   useEffect(() => {
     const bootstrapChats = async () => {
       setIsBootstrapping(true);
@@ -106,6 +192,15 @@ const Chat = () => {
             (a, b) => new Date(b.updatedAt || 0).getTime() - new Date(a.updatedAt || 0).getTime(),
           );
         });
+      }
+
+      if (response.data?.reportDownload) {
+        try {
+          await downloadReportFile(response.data.reportDownload);
+        } catch (downloadErr) {
+          console.error(downloadErr);
+          setErrorMsg('Report was generated but the PDF download failed. Please try again.');
+        }
       }
     } catch (err) {
       console.error(err);
@@ -235,7 +330,11 @@ const Chat = () => {
           </div>
         </div>
 
-        <ChatInput onSendMessage={handleSendMessage} isLoading={isLoading || isBootstrapping || !activeChatId} />
+        <ChatInput
+          onSendMessage={handleSendMessage}
+          onSendReport={handleSendReport}
+          isLoading={isLoading || isBootstrapping || !activeChatId}
+        />
       </div>
     </div>
   );
